@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { BUSINESS_RULES } from './constants';
+import { hashPassword, constantTimeCompare } from './auth';
 
 export type Bindings = {
   DB: D1Database;
@@ -58,27 +59,34 @@ function renderPortalHtml(): string {
         </button>
       </div>
 
-      <!-- Google Auth Header Area -->
+      <!-- Auth Header Area -->
       <div class="flex items-center gap-2">
-        <div id="googleSignInWrapper" class="flex items-center">
-          <div id="g_id_onload"
-               data-client_id="${GOOGLE_CLIENT_ID}"
-               data-callback="handleGoogleCredentialResponse"
-               data-auto_prompt="false">
-          </div>
-          <div class="g_id_signin"
-               data-type="standard"
-               data-size="medium"
-               data-theme="outline"
-               data-text="signin_with"
-               data-shape="pill"
-               data-logo_alignment="left">
+        <!-- Logged Out Area -->
+        <div id="loggedOutArea" class="flex items-center gap-2">
+          <button onclick="openAuthModal('login')" class="bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-white/20 transition flex items-center gap-1.5">
+            <span>🔑</span> เข้าสู่ระบบ / สมัคร
+          </button>
+          <div id="googleSignInWrapper" class="flex items-center">
+            <div id="g_id_onload"
+                 data-client_id="${GOOGLE_CLIENT_ID}"
+                 data-callback="handleGoogleCredentialResponse"
+                 data-auto_prompt="false">
+            </div>
+            <div class="g_id_signin"
+                 data-type="standard"
+                 data-size="medium"
+                 data-theme="outline"
+                 data-text="signin_with"
+                 data-shape="pill"
+                 data-logo_alignment="left">
+            </div>
           </div>
         </div>
 
         <!-- Logged In User Profile -->
         <div id="userProfileArea" class="hidden flex items-center gap-2 bg-indigo-700/80 px-2.5 py-1 rounded-full border border-indigo-500/50">
-          <img id="userAvatarImg" src="" alt="avatar" class="w-6 h-6 rounded-full border border-white/50 object-cover">
+          <div id="userAvatarPlaceholder" class="w-6 h-6 rounded-full bg-indigo-400 text-white font-bold flex items-center justify-center text-xs">U</div>
+          <img id="userAvatarImg" src="" alt="avatar" class="w-6 h-6 rounded-full border border-white/50 object-cover hidden">
           <div class="text-left text-xs leading-none">
             <div id="userNameDisplay" class="font-semibold text-white truncate max-w-[120px]"></div>
             <div id="userRoleBadge" class="text-[10px] text-indigo-200 font-mono mt-0.5"></div>
@@ -219,6 +227,65 @@ function renderPortalHtml(): string {
     </section>
   </main>
 
+  <!-- Auth Modal (Login / Register) -->
+  <div id="authModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4">
+      <div class="flex justify-between items-center border-b pb-3">
+        <div class="flex gap-4">
+          <button id="authTabLoginBtn" onclick="switchAuthTab('login')" class="font-bold text-sm text-indigo-600 pb-1 border-b-2 border-indigo-600">เข้าสู่ระบบ</button>
+          <button id="authTabRegisterBtn" onclick="switchAuthTab('register')" class="font-semibold text-sm text-slate-400 hover:text-slate-600 pb-1">สมัครสมาชิก</button>
+        </div>
+        <button onclick="closeAuthModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+      </div>
+
+      <!-- Login Form -->
+      <form id="loginForm" onsubmit="handleLoginSubmit(event)" class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">อีเมล *</label>
+          <input type="email" id="loginEmail" required placeholder="seree999@gmail.com หรืออีเมลของคุณ" class="border border-slate-300 w-full px-3 py-2 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">รหัสผ่าน *</label>
+          <input type="password" id="loginPassword" required placeholder="••••••••" class="border border-slate-300 w-full px-3 py-2 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div id="loginError" class="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs hidden"></div>
+        <button type="submit" id="loginSubmitBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm transition shadow-sm">
+          เข้าสู่ระบบ
+        </button>
+        <div class="text-center text-xs text-slate-500 pt-2">
+          ยังไม่มีบัญชี? <a href="javascript:void(0)" onclick="switchAuthTab('register')" class="text-indigo-600 font-semibold hover:underline">สมัครสมาชิกที่นี่</a>
+        </div>
+      </form>
+
+      <!-- Register Form -->
+      <form id="registerForm" onsubmit="handleRegisterSubmit(event)" class="space-y-3 hidden">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">ชื่อ - นามสกุล *</label>
+          <input type="text" id="regName" required placeholder="สมชาย ใจดี" class="border border-slate-300 w-full px-3 py-2 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">อีเมล *</label>
+          <input type="email" id="regEmail" required placeholder="name@example.com" class="border border-slate-300 w-full px-3 py-2 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">รหัสผ่าน (อย่างน้อย 6 ตัวอักษร) *</label>
+          <input type="password" id="regPassword" minlength="6" required placeholder="อย่างน้อย 6 ตัวอักษร" class="border border-slate-300 w-full px-3 py-2 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">ยืนยันรหัสผ่าน *</label>
+          <input type="password" id="regConfirmPassword" minlength="6" required placeholder="กรอกรหัสผ่านซ้ำอีกครั้ง" class="border border-slate-300 w-full px-3 py-2 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div id="registerError" class="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs hidden"></div>
+        <button type="submit" id="registerSubmitBtn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl text-sm transition shadow-sm">
+          ยืนยันการสมัครสมาชิก
+        </button>
+        <div class="text-center text-xs text-slate-500 pt-2">
+          มีบัญชีอยู่แล้ว? <a href="javascript:void(0)" onclick="switchAuthTab('login')" class="text-indigo-600 font-semibold hover:underline">เข้าสู่ระบบ</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Booking Modal -->
   <div id="bookingModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4">
@@ -313,7 +380,125 @@ function renderPortalHtml(): string {
     let currentBookingData = null;
     let currentUser = null;
 
-    // --- Google Auth Handler ---
+    // --- Authentication Handlers (Google + Email/Password) ---
+    function openAuthModal(tab) {
+      switchAuthTab(tab || 'login');
+      document.getElementById('authModal').classList.remove('hidden');
+    }
+
+    function closeAuthModal() {
+      document.getElementById('authModal').classList.add('hidden');
+      document.getElementById('loginError').classList.add('hidden');
+      document.getElementById('registerError').classList.add('hidden');
+    }
+
+    function switchAuthTab(tab) {
+      const loginBtn = document.getElementById('authTabLoginBtn');
+      const regBtn = document.getElementById('authTabRegisterBtn');
+      const loginForm = document.getElementById('loginForm');
+      const regForm = document.getElementById('registerForm');
+      const loginErr = document.getElementById('loginError');
+      const regErr = document.getElementById('registerError');
+
+      loginErr.classList.add('hidden');
+      regErr.classList.add('hidden');
+
+      if (tab === 'register') {
+        loginBtn.className = 'font-semibold text-sm text-slate-400 hover:text-slate-600 pb-1';
+        regBtn.className = 'font-bold text-sm text-emerald-600 pb-1 border-b-2 border-emerald-600';
+        loginForm.classList.add('hidden');
+        regForm.classList.remove('hidden');
+      } else {
+        loginBtn.className = 'font-bold text-sm text-indigo-600 pb-1 border-b-2 border-indigo-600';
+        regBtn.className = 'font-semibold text-sm text-slate-400 hover:text-slate-600 pb-1';
+        loginForm.classList.remove('hidden');
+        regForm.classList.add('hidden');
+      }
+    }
+
+    async function handleLoginSubmit(e) {
+      e.preventDefault();
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      const btn = document.getElementById('loginSubmitBtn');
+      const errBox = document.getElementById('loginError');
+
+      btn.disabled = true;
+      btn.textContent = 'กำลังเข้าสู่ระบบ...';
+      errBox.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const json = await res.json();
+        if (json.success) {
+          currentUser = json.user;
+          localStorage.setItem('toy_car_user', JSON.stringify(currentUser));
+          updateAuthUI();
+          closeAuthModal();
+          alert('👋 ยินดีต้อนรับ ' + currentUser.name + (currentUser.role === 'ADMIN' ? ' (สิทธิ์แอดมิน)' : ''));
+        } else {
+          errBox.textContent = json.error?.message || 'เข้าสู่ระบบไม่สำเร็จ';
+          errBox.classList.remove('hidden');
+        }
+      } catch (err) {
+        errBox.textContent = 'เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์';
+        errBox.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'เข้าสู่ระบบ';
+      }
+    }
+
+    async function handleRegisterSubmit(e) {
+      e.preventDefault();
+      const name = document.getElementById('regName').value.trim();
+      const email = document.getElementById('regEmail').value.trim();
+      const password = document.getElementById('regPassword').value;
+      const confirmPassword = document.getElementById('regConfirmPassword').value;
+      const btn = document.getElementById('registerSubmitBtn');
+      const errBox = document.getElementById('registerError');
+
+      errBox.classList.add('hidden');
+
+      if (password !== confirmPassword) {
+        errBox.textContent = 'รหัสผ่านและยืนยันรหัสผ่านไม่ตรงกัน';
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'กำลังสมัครสมาชิก...';
+
+      try {
+        const res = await fetch('/api/v1/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password })
+        });
+        const json = await res.json();
+        if (json.success) {
+          currentUser = json.user;
+          localStorage.setItem('toy_car_user', JSON.stringify(currentUser));
+          updateAuthUI();
+          closeAuthModal();
+          alert('🎉 สมัครสมาชิกสำเร็จ! ยินดีต้อนรับ ' + currentUser.name + (currentUser.role === 'ADMIN' ? ' (สิทธิ์แอดมิน)' : ''));
+        } else {
+          errBox.textContent = json.error?.message || 'สมัครสมาชิกไม่สำเร็จ';
+          errBox.classList.remove('hidden');
+        }
+      } catch (err) {
+        errBox.textContent = 'เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์';
+        errBox.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'ยืนยันการสมัครสมาชิก';
+      }
+    }
+
     async function handleGoogleCredentialResponse(response) {
       try {
         const idToken = response.credential;
@@ -337,16 +522,27 @@ function renderPortalHtml(): string {
     }
 
     function updateAuthUI() {
-      const signInWrapper = document.getElementById('googleSignInWrapper');
+      const loggedOutArea = document.getElementById('loggedOutArea');
       const profileArea = document.getElementById('userProfileArea');
       const adminLockIcon = document.getElementById('adminLockIcon');
+      const avatarImg = document.getElementById('userAvatarImg');
+      const avatarPlaceholder = document.getElementById('userAvatarPlaceholder');
 
       if (currentUser) {
-        signInWrapper.classList.add('hidden');
-        profileArea.classList.remove('hidden');
+        if (loggedOutArea) loggedOutArea.classList.add('hidden');
+        if (profileArea) profileArea.classList.remove('hidden');
 
-        document.getElementById('userAvatarImg').src = currentUser.picture || 'https://www.gravatar.com/avatar/?d=mp';
-        document.getElementById('userNameDisplay').textContent = currentUser.name;
+        if (currentUser.picture) {
+          avatarImg.src = currentUser.picture;
+          avatarImg.classList.remove('hidden');
+          avatarPlaceholder.classList.add('hidden');
+        } else {
+          avatarImg.classList.add('hidden');
+          avatarPlaceholder.classList.remove('hidden');
+          avatarPlaceholder.textContent = (currentUser.name || 'U').charAt(0).toUpperCase();
+        }
+
+        document.getElementById('userNameDisplay').textContent = currentUser.name || currentUser.email;
         
         let roleText = 'ลูกค้า (CUSTOMER)';
         if (currentUser.role === 'ADMIN') {
@@ -366,8 +562,8 @@ function renderPortalHtml(): string {
           nameInput.value = currentUser.name;
         }
       } else {
-        signInWrapper.classList.remove('hidden');
-        profileArea.classList.add('hidden');
+        if (loggedOutArea) loggedOutArea.classList.remove('hidden');
+        if (profileArea) profileArea.classList.add('hidden');
         adminLockIcon.textContent = '🔒';
       }
 
@@ -891,6 +1087,103 @@ app.post('/api/v1/auth/google', async (c) => {
     });
   } catch (err: any) {
     return c.json({ success: false, error: { message: 'Authentication error: ' + err.message } }, 500);
+  }
+});
+
+// =============================================================================
+// Validation Schemas for Email/Password Auth
+// =============================================================================
+const RegisterSchema = z.object({
+  email: z.string().email('รูปแบบอีเมลไม่ถูกต้อง'),
+  password: z.string().min(6, 'รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร'),
+  name: z.string().min(2, 'กรุณาระบุชื่อ-นามสกุลอย่างน้อย 2 ตัวอักษร')
+});
+
+const LoginSchema = z.object({
+  email: z.string().email('รูปแบบอีเมลไม่ถูกต้อง'),
+  password: z.string().min(1, 'กรุณาระบุรหัสผ่าน')
+});
+
+// =============================================================================
+// Route: Register with Email & Password
+// =============================================================================
+app.post('/api/v1/auth/register', zValidator('json', RegisterSchema), async (c) => {
+  const { email, password, name } = c.req.valid('json');
+  const normalizedEmail = email.toLowerCase().trim();
+  const db = c.env.DB;
+
+  try {
+    const existing = await db.prepare('SELECT id, email, password_hash, role FROM users WHERE email = ?').bind(normalizedEmail).first<any>();
+    const { hash, salt } = await hashPassword(password);
+    const nowIso = new Date().toISOString();
+    const role = (normalizedEmail === ADMIN_EMAIL.toLowerCase()) ? 'ADMIN' : 'CUSTOMER';
+
+    if (existing) {
+      if (existing.password_hash) {
+        return c.json({ success: false, error: { message: 'อีเมลนี้ถูกลงทะเบียนไว้แล้ว กรุณาเข้าสู่ระบบ' } }, 409);
+      }
+      // เคยเข้าผ่าน Google แต่เพิ่มรหัสผ่าน
+      await db.prepare(`
+        UPDATE users 
+        SET password_hash = ?, password_salt = ?, name = COALESCE(NULLIF(name, ''), ?), updated_at = ?
+        WHERE email = ?
+      `).bind(hash, salt, name.trim(), nowIso, normalizedEmail).run();
+
+      const updated = await db.prepare('SELECT id, email, name, picture, role FROM users WHERE email = ?').bind(normalizedEmail).first<any>();
+      return c.json({ success: true, message: 'ตั้งรหัสผ่านสำเร็จ', user: updated });
+    }
+
+    const userId = 'usr_' + Math.random().toString(36).substring(2, 10);
+    await db.prepare(`
+      INSERT INTO users (id, email, name, picture, role, password_hash, password_salt, created_at, updated_at)
+      VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)
+    `).bind(userId, normalizedEmail, name.trim(), role, hash, salt, nowIso, nowIso).run();
+
+    const newUser = await db.prepare('SELECT id, email, name, picture, role FROM users WHERE id = ?').bind(userId).first<any>();
+    return c.json({ success: true, message: 'สมัครสมาชิกสำเร็จ', user: newUser });
+  } catch (err: any) {
+    return c.json({ success: false, error: { message: 'เกิดข้อผิดพลาดในการสมัครสมาชิก: ' + err.message } }, 500);
+  }
+});
+
+// =============================================================================
+// Route: Login with Email & Password
+// =============================================================================
+app.post('/api/v1/auth/login', zValidator('json', LoginSchema), async (c) => {
+  const { email, password } = c.req.valid('json');
+  const normalizedEmail = email.toLowerCase().trim();
+  const db = c.env.DB;
+
+  try {
+    const user = await db.prepare('SELECT * FROM users WHERE email = ?').bind(normalizedEmail).first<any>();
+    if (!user || !user.password_hash || !user.password_salt) {
+      return c.json({ success: false, error: { message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง หรือยังไม่ได้ตั้งรหัสผ่าน' } }, 401);
+    }
+
+    const { hash: computedHash } = await hashPassword(password, user.password_salt);
+    if (!constantTimeCompare(user.password_hash, computedHash)) {
+      return c.json({ success: false, error: { message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' } }, 401);
+    }
+
+    // กำหนดสิทธิ์ ADMIN เสมอสำหรับ ADMIN_EMAIL
+    let role = user.role;
+    if (normalizedEmail === ADMIN_EMAIL.toLowerCase() && role !== 'ADMIN') {
+      role = 'ADMIN';
+      await db.prepare("UPDATE users SET role = 'ADMIN' WHERE email = ?").bind(normalizedEmail).run();
+    }
+
+    return c.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        picture: user.picture || '',
+        role: role
+      }
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: { message: 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ: ' + err.message } }, 500);
   }
 });
 

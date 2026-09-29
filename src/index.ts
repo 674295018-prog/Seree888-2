@@ -9,13 +9,16 @@ export type Bindings = {
   DB: D1Database;
 };
 
+const GOOGLE_CLIENT_ID = '714003657905-jqohf796ii1n4u51arnv4cskish9vd4r.apps.googleusercontent.com';
+const ADMIN_EMAIL = 'seree999@gmail.com';
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 // Enable CORS
 app.use('*', cors());
 
 // =============================================================================
-// Helper: HTML Web UI Template
+// Helper: HTML Web UI Template with Google Sign-In
 // =============================================================================
 function renderPortalHtml(): string {
   return `<!DOCTYPE html>
@@ -25,6 +28,7 @@ function renderPortalHtml(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ระบบจองรถของเล่นไฟฟ้า | Toy Car Booking & Fleet</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -35,23 +39,51 @@ function renderPortalHtml(): string {
 <body class="bg-slate-50 text-slate-800 min-h-screen">
   <!-- Top Navigation -->
   <header class="bg-indigo-600 text-white shadow-md sticky top-0 z-50">
-    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-2">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-3">
       <div class="flex items-center gap-2">
         <span class="text-2xl">🏎️</span>
         <div>
           <h1 class="font-bold text-lg leading-tight">Toy Car Booking & Fleet</h1>
-          <p class="text-xs text-indigo-200">Powered by Cloudflare Workers & D1 Edge</p>
+          <p class="text-xs text-indigo-200">Cloudflare Workers & D1 Edge</p>
         </div>
       </div>
-      <div class="flex items-center gap-3">
-        <span class="inline-flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-1 rounded-full text-xs font-medium">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          Live on Cloudflare D1
-        </span>
-        <div class="flex bg-indigo-800/60 p-1 rounded-lg text-xs font-medium gap-1">
-          <button id="tabCustomerBtn" onclick="switchTab('customer')" class="px-3 py-1.5 rounded-md bg-white text-indigo-900 shadow">สำหรับลูกค้า (จองรถ)</button>
-          <button id="tabStaffBtn" onclick="switchTab('staff')" class="px-3 py-1.5 rounded-md text-indigo-200 hover:text-white">ระบบพนักงาน (Check-in/Out)</button>
-          <button id="tabAdminBtn" onclick="switchTab('admin')" class="px-3 py-1.5 rounded-md text-indigo-200 hover:text-white">แดชบอร์ดรายได้ (Admin)</button>
+
+      <!-- Navigation Tabs -->
+      <div class="flex bg-indigo-800/60 p-1 rounded-lg text-xs font-medium gap-1">
+        <button id="tabCustomerBtn" onclick="switchTab('customer')" class="px-3 py-1.5 rounded-md bg-white text-indigo-900 shadow">สำหรับลูกค้า (จองรถ)</button>
+        <button id="tabStaffBtn" onclick="switchTab('staff')" class="px-3 py-1.5 rounded-md text-indigo-200 hover:text-white">ระบบพนักงาน (Check-in/Out)</button>
+        <button id="tabAdminBtn" onclick="switchTab('admin')" class="px-3 py-1.5 rounded-md text-indigo-200 hover:text-white flex items-center gap-1">
+          <span>แดชบอร์ดรายได้ (Admin)</span>
+          <span id="adminLockIcon" class="text-amber-300 text-xs">🔒</span>
+        </button>
+      </div>
+
+      <!-- Google Auth Header Area -->
+      <div class="flex items-center gap-2">
+        <div id="googleSignInWrapper" class="flex items-center">
+          <div id="g_id_onload"
+               data-client_id="${GOOGLE_CLIENT_ID}"
+               data-callback="handleGoogleCredentialResponse"
+               data-auto_prompt="false">
+          </div>
+          <div class="g_id_signin"
+               data-type="standard"
+               data-size="medium"
+               data-theme="outline"
+               data-text="signin_with"
+               data-shape="pill"
+               data-logo_alignment="left">
+          </div>
+        </div>
+
+        <!-- Logged In User Profile -->
+        <div id="userProfileArea" class="hidden flex items-center gap-2 bg-indigo-700/80 px-2.5 py-1 rounded-full border border-indigo-500/50">
+          <img id="userAvatarImg" src="" alt="avatar" class="w-6 h-6 rounded-full border border-white/50 object-cover">
+          <div class="text-left text-xs leading-none">
+            <div id="userNameDisplay" class="font-semibold text-white truncate max-w-[120px]"></div>
+            <div id="userRoleBadge" class="text-[10px] text-indigo-200 font-mono mt-0.5"></div>
+          </div>
+          <button onclick="handleLogout()" title="ออกจากระบบ" class="text-indigo-200 hover:text-white text-sm ml-1 font-bold">✕</button>
         </div>
       </div>
     </div>
@@ -134,29 +166,54 @@ function renderPortalHtml(): string {
     <!-- ADMIN TAB -->
     <!-- ===================================================================== -->
     <section id="adminView" class="hidden space-y-6">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span class="text-xs text-slate-500">รายได้รวมจากการเช่า</span>
-          <div id="metricRentalRevenue" class="text-2xl font-bold text-indigo-600 mt-1">0 บาท</div>
-        </div>
-        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span class="text-xs text-slate-500">ค่าปรับ Overtime ที่เก็บได้</span>
-          <div id="metricPenaltyRevenue" class="text-2xl font-bold text-amber-600 mt-1">0 บาท</div>
-        </div>
-        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span class="text-xs text-slate-500">จำนวนการจองทั้งหมด</span>
-          <div id="metricTotalBookings" class="text-2xl font-bold text-slate-800 mt-1">0 รายการ</div>
-        </div>
-        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span class="text-xs text-slate-500">รถพร้อมใช้งานในฝูง</span>
-          <div id="metricActiveVehicles" class="text-2xl font-bold text-emerald-600 mt-1">0 คัน</div>
-        </div>
+      <!-- Admin Access Restricted Notice -->
+      <div id="adminLockedNotice" class="bg-amber-50 border border-amber-200 p-8 rounded-2xl text-center space-y-3 hidden">
+        <div class="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl">🔒</div>
+        <h3 class="text-xl font-bold text-amber-900">พื้นที่เฉพาะผู้ดูแลระบบ (Admin Only)</h3>
+        <p class="text-sm text-amber-700 max-w-md mx-auto">
+          กรุณาเข้าสู่ระบบด้วยบัญชี Google ของผู้ดูแลระบบ (<span class="font-mono font-bold text-amber-950">${ADMIN_EMAIL}</span>) เพื่อดูรายงานรายได้และข้อมูลทางการเงิน
+        </p>
       </div>
 
-      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-        <h3 class="font-bold text-base mb-3 text-slate-800">ประวัติธุรกรรมและการเงินล่าสุด (Audit Trail)</h3>
-        <div id="adminTxList" class="space-y-2 text-xs text-slate-600">
-          <div class="text-center py-6 text-slate-400">กำลังดึงข้อมูลธุรกรรม...</div>
+      <!-- Admin Dashboard Content -->
+      <div id="adminUnlockedContent" class="space-y-6 hidden">
+        <div class="flex justify-between items-center bg-indigo-50 border border-indigo-200 p-4 rounded-2xl">
+          <div class="flex items-center gap-2">
+            <span class="text-xl">🛡️</span>
+            <div>
+              <span class="text-xs font-semibold text-indigo-700 uppercase tracking-wider block">Admin Mode</span>
+              <span class="text-sm font-bold text-slate-800">ยินดีต้อนรับ คุณเสรี (Admin: ${ADMIN_EMAIL})</span>
+            </div>
+          </div>
+          <button onclick="loadAdminMetrics()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium shadow-sm transition">
+            🔄 รีเฟรชยอดเงิน
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <span class="text-xs text-slate-500">รายได้รวมจากการเช่า</span>
+            <div id="metricRentalRevenue" class="text-2xl font-bold text-indigo-600 mt-1">0 บาท</div>
+          </div>
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <span class="text-xs text-slate-500">ค่าปรับ Overtime ที่เก็บได้</span>
+            <div id="metricPenaltyRevenue" class="text-2xl font-bold text-amber-600 mt-1">0 บาท</div>
+          </div>
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <span class="text-xs text-slate-500">จำนวนการจองทั้งหมด</span>
+            <div id="metricTotalBookings" class="text-2xl font-bold text-slate-800 mt-1">0 รายการ</div>
+          </div>
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <span class="text-xs text-slate-500">รถพร้อมใช้งานในฝูง</span>
+            <div id="metricActiveVehicles" class="text-2xl font-bold text-emerald-600 mt-1">0 คัน</div>
+          </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+          <h3 class="font-bold text-base mb-3 text-slate-800">ประวัติธุรกรรมและการเงินล่าสุด (Audit Trail)</h3>
+          <div id="adminTxList" class="space-y-2 text-xs text-slate-600">
+            <div class="text-center py-6 text-slate-400">กำลังดึงข้อมูลธุรกรรม...</div>
+          </div>
         </div>
       </div>
     </section>
@@ -254,6 +311,106 @@ function renderPortalHtml(): string {
   <script>
     let currentTab = 'customer';
     let currentBookingData = null;
+    let currentUser = null;
+
+    // --- Google Auth Handler ---
+    async function handleGoogleCredentialResponse(response) {
+      try {
+        const idToken = response.credential;
+        const res = await fetch('/api/v1/auth/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential: idToken })
+        });
+        const json = await res.json();
+        if (json.success) {
+          currentUser = json.user;
+          localStorage.setItem('toy_car_user', JSON.stringify(currentUser));
+          updateAuthUI();
+          alert('👋 เข้าสู่ระบบสำเร็จ: ' + currentUser.name + (currentUser.role === 'ADMIN' ? ' (สิทธิ์แอดมิน)' : ''));
+        } else {
+          alert('❌ เข้าสู่ระบบล้มเหลว: ' + json.error?.message);
+        }
+      } catch (err) {
+        alert('เกิดข้อผิดพลาดในการเชื่อมต่อ Google Auth');
+      }
+    }
+
+    function updateAuthUI() {
+      const signInWrapper = document.getElementById('googleSignInWrapper');
+      const profileArea = document.getElementById('userProfileArea');
+      const adminLockIcon = document.getElementById('adminLockIcon');
+
+      if (currentUser) {
+        signInWrapper.classList.add('hidden');
+        profileArea.classList.remove('hidden');
+
+        document.getElementById('userAvatarImg').src = currentUser.picture || 'https://www.gravatar.com/avatar/?d=mp';
+        document.getElementById('userNameDisplay').textContent = currentUser.name;
+        
+        let roleText = 'ลูกค้า (CUSTOMER)';
+        if (currentUser.role === 'ADMIN') {
+          roleText = '⭐ แอดมิน (ADMIN)';
+          adminLockIcon.textContent = '🔓';
+        } else if (currentUser.role === 'STAFF') {
+          roleText = '👷 พนักงาน (STAFF)';
+          adminLockIcon.textContent = '🔒';
+        } else {
+          adminLockIcon.textContent = '🔒';
+        }
+        document.getElementById('userRoleBadge').textContent = roleText;
+
+        // Auto-fill customer name in booking modal
+        const nameInput = document.getElementById('customerName');
+        if (nameInput && !nameInput.value) {
+          nameInput.value = currentUser.name;
+        }
+      } else {
+        signInWrapper.classList.remove('hidden');
+        profileArea.classList.add('hidden');
+        adminLockIcon.textContent = '🔒';
+      }
+
+      // If currently on admin tab, refresh view
+      if (currentTab === 'admin') {
+        renderAdminTabState();
+      }
+    }
+
+    function handleLogout() {
+      currentUser = null;
+      localStorage.removeItem('toy_car_user');
+      updateAuthUI();
+      if (currentTab === 'admin') {
+        switchTab('customer');
+      }
+      alert('ออกจากระบบเรียบร้อยแล้ว');
+    }
+
+    function checkSavedUser() {
+      const saved = localStorage.getItem('toy_car_user');
+      if (saved) {
+        try {
+          currentUser = JSON.parse(saved);
+          updateAuthUI();
+        } catch (e) {
+          localStorage.removeItem('toy_car_user');
+        }
+      }
+    }
+
+    function renderAdminTabState() {
+      const locked = document.getElementById('adminLockedNotice');
+      const unlocked = document.getElementById('adminUnlockedContent');
+      if (currentUser && currentUser.role === 'ADMIN') {
+        locked.classList.add('hidden');
+        unlocked.classList.remove('hidden');
+        loadAdminMetrics();
+      } else {
+        locked.classList.remove('hidden');
+        unlocked.classList.add('hidden');
+      }
+    }
 
     function switchTab(tab) {
       currentTab = tab;
@@ -263,7 +420,7 @@ function renderPortalHtml(): string {
 
       document.getElementById('tabCustomerBtn').className = 'px-3 py-1.5 rounded-md text-indigo-200 hover:text-white';
       document.getElementById('tabStaffBtn').className = 'px-3 py-1.5 rounded-md text-indigo-200 hover:text-white';
-      document.getElementById('tabAdminBtn').className = 'px-3 py-1.5 rounded-md text-indigo-200 hover:text-white';
+      document.getElementById('tabAdminBtn').className = 'px-3 py-1.5 rounded-md text-indigo-200 hover:text-white flex items-center gap-1';
 
       if (tab === 'customer') {
         document.getElementById('customerView').classList.remove('hidden');
@@ -276,8 +433,8 @@ function renderPortalHtml(): string {
         loadFleetCharging();
       } else if (tab === 'admin') {
         document.getElementById('adminView').classList.remove('hidden');
-        document.getElementById('tabAdminBtn').className = 'px-3 py-1.5 rounded-md bg-white text-indigo-900 shadow';
-        loadAdminMetrics();
+        document.getElementById('tabAdminBtn').className = 'px-3 py-1.5 rounded-md bg-white text-indigo-900 shadow flex items-center gap-1';
+        renderAdminTabState();
       }
     }
 
@@ -347,6 +504,10 @@ function renderPortalHtml(): string {
       const mins = String(now.getMinutes()).padStart(2, '0');
       document.getElementById('slotStartTime').value = \`\${hours}:\${mins}\`;
       
+      if (currentUser && currentUser.name) {
+        document.getElementById('customerName').value = currentUser.name;
+      }
+
       updatePricePreview();
       document.getElementById('bookingModal').classList.remove('hidden');
     }
@@ -407,7 +568,6 @@ function renderPortalHtml(): string {
       document.getElementById('ticketVehicleDisplay').textContent = data.vehicle_name;
       document.getElementById('ticketPriceDisplay').textContent = (data.pricing.total_cents / 100) + ' บาท';
       
-      // QR Code Generator API
       const qrData = encodeURIComponent('PROMPTPAY|TOYCAR|' + data.booking_code + '|' + (data.pricing.total_cents / 100));
       document.getElementById('qrImageElement').src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + qrData;
 
@@ -670,6 +830,7 @@ function renderPortalHtml(): string {
     }
 
     // Auto-init on page load
+    checkSavedUser();
     loadVehicles();
   </script>
 </body>
@@ -681,6 +842,56 @@ function renderPortalHtml(): string {
 // =============================================================================
 app.get('/', (c) => {
   return c.html(renderPortalHtml());
+});
+
+// =============================================================================
+// Route: Google Authentication
+// =============================================================================
+app.post('/api/v1/auth/google', async (c) => {
+  try {
+    const body = await c.req.json<{ credential?: string }>().catch(() => ({ credential: undefined }));
+    const credential = body?.credential;
+    if (!credential) {
+      return c.json({ success: false, error: { message: 'Missing credential token' } }, 400);
+    }
+
+    // ตรวจสอบ Google ID Token กับ Google TokenInfo Endpoint
+    const gResp = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(credential));
+    if (!gResp.ok) {
+      return c.json({ success: false, error: { message: 'Google Token Verification Failed' } }, 401);
+    }
+    const payload = await gResp.json<any>();
+
+    const email = payload.email?.toLowerCase();
+    const name = payload.name || payload.given_name || 'ผู้ใช้งาน Google';
+    const picture = payload.picture || '';
+    const userId = 'usr_' + (payload.sub || Math.random().toString(36).substring(2, 10));
+
+    // กำหนดบทบาท: อีเมล seree999@gmail.com ได้รับสิทธิ์ ADMIN เสมอ
+    const role = (email === ADMIN_EMAIL.toLowerCase()) ? 'ADMIN' : 'CUSTOMER';
+    const nowIso = new Date().toISOString();
+
+    // บันทึกลงตาราง users ใน Cloudflare D1
+    await c.env.DB.prepare(`
+      INSERT INTO users (id, email, name, picture, role, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(email) DO UPDATE SET
+        name = excluded.name,
+        picture = excluded.picture,
+        role = CASE WHEN excluded.email = '${ADMIN_EMAIL.toLowerCase()}' THEN 'ADMIN' ELSE users.role END,
+        updated_at = excluded.updated_at
+    `).bind(userId, email, name, picture, role, nowIso, nowIso).run();
+
+    // ดึงข้อมูล User ล่าสุดจาก Database
+    const user = await c.env.DB.prepare('SELECT id, email, name, picture, role FROM users WHERE email = ?').bind(email).first();
+
+    return c.json({
+      success: true,
+      user
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: { message: 'Authentication error: ' + err.message } }, 500);
+  }
 });
 
 // =============================================================================
@@ -911,7 +1122,7 @@ app.get('/api/v1/bookings/:bookingCode', async (c) => {
 // Route: Staff Check-in (Start Session & Timer)
 // =============================================================================
 app.post('/api/v1/rental-sessions/checkin', async (c) => {
-  const body = await c.req.json<{ booking_code: string; condition_before?: string }>();
+  const body = await c.req.json<{ booking_code: string; condition_before?: string }>().catch(() => ({} as any));
   const db = c.env.DB;
 
   const booking = await db.prepare('SELECT * FROM bookings WHERE booking_code = ?').bind(body.booking_code).first<any>();
@@ -1052,7 +1263,7 @@ app.post('/api/v1/rental-sessions/:id/checkout-preview', async (c) => {
 // =============================================================================
 app.post('/api/v1/rental-sessions/:id/complete', async (c) => {
   const sessionId = c.req.param('id');
-  const body = await c.req.json<{ penalty_cents?: number; condition_after?: string }>();
+  const body = await c.req.json<{ penalty_cents?: number; condition_after?: string }>().catch(() => ({} as any));
   const db = c.env.DB;
 
   const session = await db.prepare('SELECT * FROM rental_sessions WHERE id = ?').bind(sessionId).first<any>();
@@ -1127,9 +1338,7 @@ app.post('/api/v1/fleet/:id/recharge', async (c) => {
   const logId = 'bat_' + Math.random().toString(36).substring(2, 10);
 
   await db.batch([
-    // รีเซ็ตสถานะเป็น AVAILABLE และรอบสะสมกลับเป็น 0
     db.prepare("UPDATE vehicles SET status = 'AVAILABLE', cycle_count = 0, updated_at = ? WHERE id = ?").bind(nowIso, id),
-    // บันทึก Log การชาร์จ
     db.prepare(`
       INSERT INTO battery_logs (id, vehicle_id, cycle_count_at_charge, staff_id, started_at, completed_at, status)
       VALUES (?, ?, ?, 'staff_01', ?, ?, 'COMPLETED')
@@ -1156,21 +1365,18 @@ app.get('/api/v1/admin/metrics', async (c) => {
   const totalBookings = await db.prepare('SELECT count(*) as count FROM bookings').first<{ count: number }>();
   const availableVehicles = await db.prepare("SELECT count(*) as count FROM vehicles WHERE status = 'AVAILABLE'").first<{ count: number }>();
   
-  // Total rental revenue
   const rentRevenue = await db.prepare(`
     SELECT coalesce(sum(amount_cents), 0) as total 
     FROM payment_transactions 
     WHERE transaction_type = 'RENTAL_FEE' AND status = 'SUCCESS'
   `).first<{ total: number }>();
 
-  // Total penalty revenue
   const penaltyRevenue = await db.prepare(`
     SELECT coalesce(sum(penalty_amount_cents), 0) as total 
     FROM rental_sessions 
     WHERE status = 'COMPLETED'
   `).first<{ total: number }>();
 
-  // Recent 10 transactions
   const { results: recentTx } = await db.prepare(`
     SELECT t.*, b.booking_code 
     FROM payment_transactions t

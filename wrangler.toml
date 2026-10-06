@@ -8,3 +8,7 @@ binding = "DB"
 database_name = "toy_car_db"
 database_id = "cfec2763-8e9b-494f-9c63-a0bf8ec7ab61"
 migrations_dir = "migrations"
+
+# Cloudflare Workers AI Binding
+[ai]
+binding = "AI"

@@ -5,9 +5,11 @@ import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { BUSINESS_RULES } from './constants';
 import { hashPassword, constantTimeCompare } from './auth';
+import { generateBotResponse, VehicleInfo } from './chatbot';
 
 export type Bindings = {
   DB: D1Database;
+  AI?: any;
 };
 
 const GOOGLE_CLIENT_ID = '714003657905-jqohf796ii1n4u51arnv4cskish9vd4r.apps.googleusercontent.com';
@@ -373,6 +375,102 @@ function renderPortalHtml(): string {
         </button>
       </div>
     </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- FLOATING AI CHATBOT WIDGET (น้องรถด่วน AI) -->
+  <!-- ===================================================================== -->
+  <div id="aiChatbotContainer" class="fixed bottom-5 right-5 z-50 flex flex-col items-end">
+    <!-- Chat Window Box -->
+    <div id="aiChatWindow" class="hidden mb-3 w-[360px] sm:w-[400px] h-[520px] max-h-[82vh] bg-white rounded-3xl shadow-2xl border border-indigo-100 flex flex-col overflow-hidden transition-all duration-300 origin-bottom-right">
+      <!-- Header -->
+      <div class="bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 text-white p-3.5 flex justify-between items-center shadow-sm shrink-0">
+        <div class="flex items-center gap-2.5">
+          <div class="relative">
+            <div class="w-9 h-9 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-xl shadow-inner">
+              🤖
+            </div>
+            <span class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-400 border-2 border-indigo-700 rounded-full animate-pulse"></span>
+          </div>
+          <div>
+            <div class="font-bold text-sm leading-tight flex items-center gap-1.5">
+              <span>น้องรถด่วน AI</span>
+              <span class="bg-emerald-400/20 text-emerald-300 text-[10px] px-1.5 py-0.5 rounded-full font-medium">ออนไลน์</span>
+            </div>
+            <div class="text-[11px] text-indigo-200">ผู้ช่วยอัจฉริยะสนามรถของเล่น 24 ชม.</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-1">
+          <button onclick="clearChatHistory()" title="ล้างบทสนทนา" class="text-indigo-200 hover:text-white p-1 rounded-lg text-xs transition">
+            🧹
+          </button>
+          <button onclick="toggleChatWindow()" title="ย่อหน้าต่าง" class="text-indigo-200 hover:text-white p-1 rounded-lg text-sm font-bold transition">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- Message Container -->
+      <div id="aiChatMessages" class="flex-1 p-3.5 overflow-y-auto space-y-3 bg-slate-50/80 text-xs">
+        <!-- Default Welcome Message -->
+        <div class="flex gap-2 items-start">
+          <div class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm shrink-0 shadow-xs">
+            🤖
+          </div>
+          <div class="bg-white p-3 rounded-2xl rounded-tl-none border border-slate-200 shadow-sm text-slate-700 leading-relaxed max-w-[85%] space-y-1.5">
+            <div>👋 สวัสดีครับ! ผมคือ <b>น้องรถด่วน AI</b> ยินดีต้อนรับสู่สนามรถของเล่นไฟฟ้าครับ 🏎️✨</div>
+            <div class="text-slate-500 text-[11px]">สามารถสอบถามผมได้ทุกเรื่องเลยครับ เช่น รถที่ว่างตอนนี้, ราคาเช่า, กฎผ่อนผัน หรือคำแนะนำสำหรับน้องๆ ครับ</div>
+          </div>
+        </div>
+
+        <!-- Quick Suggestion Chips -->
+        <div id="aiQuickChips" class="space-y-1.5 pt-1">
+          <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider pl-9">คำถามที่พบบ่อย:</div>
+          <div class="flex flex-wrap gap-1.5 pl-9">
+            <button onclick="sendQuickPrompt('ตอนนี้มีรถว่างกี่คันครับ?')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-[11px] border border-indigo-200 transition">
+              🚗 รถว่างตอนนี้มีกี่คัน?
+            </button>
+            <button onclick="sendQuickPrompt('ค่าเช่าและเงินมัดจำคิดยังไง?')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-[11px] border border-indigo-200 transition">
+              💰 ค่าเช่า & เงินมัดจำ
+            </button>
+            <button onclick="sendQuickPrompt('คืนรถช้ามีค่าปรับไหม มีเวลาผ่อนผันไหม?')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-[11px] border border-indigo-200 transition">
+              ⏱️ ค่าปรับ & ผ่อนผัน
+            </button>
+            <button onclick="sendQuickPrompt('เด็ก 3 ขวบ แนะนำรุ่นไหนดีครับ?')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-[11px] border border-indigo-200 transition">
+              👶 แนะนำรถตามวัยเด็ก
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Typing Indicator -->
+      <div id="aiTypingIndicator" class="hidden px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center gap-2 text-slate-400 text-xs shrink-0">
+        <div class="flex gap-1 items-center">
+          <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce"></span>
+          <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
+          <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+        </div>
+        <span class="text-[11px] text-indigo-600 font-medium">น้องรถด่วนกำลังค้นหาข้อมูล...</span>
+      </div>
+
+      <!-- Chat Input Area -->
+      <form onsubmit="handleSendChat(event)" class="p-2.5 bg-white border-t border-slate-200 flex gap-2 items-center shrink-0">
+        <input type="text" id="aiChatInput" autocomplete="off" placeholder="พิมพ์ถามน้องรถด่วนได้เลย..." class="flex-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        <button type="submit" id="aiChatSendBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold transition shrink-0 flex items-center gap-1 shadow-sm">
+          <span>ส่ง</span> 🚀
+        </button>
+      </form>
+    </div>
+
+    <!-- Floating Trigger Bubble Button -->
+    <button onclick="toggleChatWindow()" id="aiChatToggleBtn" class="bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-4 py-3 rounded-full shadow-2xl flex items-center gap-2.5 transition transform hover:scale-105 group border-2 border-white/60">
+      <span class="text-xl group-hover:rotate-12 transition transform">🤖</span>
+      <span class="text-xs font-bold tracking-wide">ถามน้องรถด่วน AI</span>
+      <span class="relative flex h-2.5 w-2.5">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+      </span>
+    </button>
   </div>
 
   <script>
@@ -1025,6 +1123,160 @@ function renderPortalHtml(): string {
       } catch (err) {}
     }
 
+    // --- AI Chatbot Floating Assistant Logic ---
+    let chatHistory = [];
+
+    function toggleChatWindow() {
+      const win = document.getElementById('aiChatWindow');
+      if (!win) return;
+      const isHidden = win.classList.contains('hidden');
+      if (isHidden) {
+        win.classList.remove('hidden');
+        document.getElementById('aiChatInput').focus();
+        scrollChatToBottom();
+      } else {
+        win.classList.add('hidden');
+      }
+    }
+
+    function scrollChatToBottom() {
+      const container = document.getElementById('aiChatMessages');
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
+    function sendQuickPrompt(promptText) {
+      document.getElementById('aiChatInput').value = promptText;
+      handleSendChat();
+    }
+
+    function clearChatHistory() {
+      chatHistory = [];
+      const messagesContainer = document.getElementById('aiChatMessages');
+      if (!messagesContainer) return;
+      messagesContainer.innerHTML = \`
+        <div class="flex gap-2 items-start">
+          <div class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm shrink-0 shadow-xs">
+            🤖
+          </div>
+          <div class="bg-white p-3 rounded-2xl rounded-tl-none border border-slate-200 shadow-sm text-slate-700 leading-relaxed max-w-[85%] space-y-1.5">
+            <div>ล้างบทสนทนาเรียบร้อยครับ! มีอะไรให้น้องรถด่วนช่วยแนะนำอีกไหมครับ 🏎️✨</div>
+          </div>
+        </div>
+        <div id="aiQuickChips" class="space-y-1.5 pt-1">
+          <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider pl-9">คำถามที่พบบ่อย:</div>
+          <div class="flex flex-wrap gap-1.5 pl-9">
+            <button onclick="sendQuickPrompt('ตอนนี้มีรถว่างกี่คันครับ?')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-[11px] border border-indigo-200 transition">
+              🚗 รถว่างตอนนี้มีกี่คัน?
+            </button>
+            <button onclick="sendQuickPrompt('ค่าเช่าและเงินมัดจำคิดยังไง?')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-[11px] border border-indigo-200 transition">
+              💰 ค่าเช่า & เงินมัดจำ
+            </button>
+            <button onclick="sendQuickPrompt('คืนรถช้ามีค่าปรับไหม มีเวลาผ่อนผันไหม?')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-[11px] border border-indigo-200 transition">
+              ⏱️ ค่าปรับ & ผ่อนผัน
+            </button>
+            <button onclick="sendQuickPrompt('เด็ก 3 ขวบ แนะนำรุ่นไหนดีครับ?')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-[11px] border border-indigo-200 transition">
+              👶 แนะนำรถตามวัยเด็ก
+            </button>
+          </div>
+        </div>
+      \`;
+    }
+
+    function formatMarkdown(text) {
+      if (!text) return '';
+      let escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      
+      escaped = escaped.replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>');
+      escaped = escaped.replace(/\\*(.*?)\\*/g, '<i>$1</i>');
+      escaped = escaped.replace(/\\n/g, '<br>');
+      return escaped;
+    }
+
+    async function handleSendChat(e) {
+      if (e) e.preventDefault();
+      const input = document.getElementById('aiChatInput');
+      const message = input.value.trim();
+      if (!message) return;
+
+      input.value = '';
+      const messagesContainer = document.getElementById('aiChatMessages');
+      if (!messagesContainer) return;
+
+      // Append User Bubble
+      const userBubble = document.createElement('div');
+      userBubble.className = 'flex justify-end';
+      userBubble.innerHTML = \`
+        <div class="bg-indigo-600 text-white p-3 rounded-2xl rounded-tr-none shadow-sm leading-relaxed max-w-[85%]">
+          \${formatMarkdown(message)}
+        </div>
+      \`;
+      messagesContainer.appendChild(userBubble);
+      scrollChatToBottom();
+
+      // Show typing indicator
+      const typingIndicator = document.getElementById('aiTypingIndicator');
+      if (typingIndicator) typingIndicator.classList.remove('hidden');
+      scrollChatToBottom();
+
+      chatHistory.push({ role: 'user', content: message });
+
+      try {
+        const res = await fetch('/api/v1/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: message,
+            history: chatHistory.slice(-4)
+          })
+        });
+
+        const json = await res.json();
+        if (typingIndicator) typingIndicator.classList.add('hidden');
+
+        let botReply = '';
+        if (json.success && json.reply) {
+          botReply = json.reply;
+        } else {
+          botReply = 'ขออภัยครับ เกิดข้อผิดพลาดในการประมวลผลข้อความ กรุณาลองใหม่อีกครั้งครับ';
+        }
+
+        chatHistory.push({ role: 'assistant', content: botReply });
+
+        // Append Bot Bubble
+        const botBubble = document.createElement('div');
+        botBubble.className = 'flex gap-2 items-start';
+        botBubble.innerHTML = \`
+          <div class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm shrink-0 shadow-xs">
+            🤖
+          </div>
+          <div class="bg-white p-3 rounded-2xl rounded-tl-none border border-slate-200 shadow-sm text-slate-700 leading-relaxed max-w-[85%]">
+            \${formatMarkdown(botReply)}
+          </div>
+        \`;
+        messagesContainer.appendChild(botBubble);
+        scrollChatToBottom();
+      } catch (err) {
+        if (typingIndicator) typingIndicator.classList.add('hidden');
+        const errBubble = document.createElement('div');
+        errBubble.className = 'flex gap-2 items-start';
+        errBubble.innerHTML = \`
+          <div class="w-7 h-7 rounded-full bg-red-100 text-red-600 flex items-center justify-center text-sm shrink-0">
+            ⚠️
+          </div>
+          <div class="bg-red-50 border border-red-200 text-red-700 p-3 rounded-2xl rounded-tl-none leading-relaxed max-w-[85%]">
+            ขออภัยครับ ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ AI ได้ในขณะนี้ กรุณาลองใหม่อีกครั้งครับ
+          </div>
+        \`;
+        messagesContainer.appendChild(errBubble);
+        scrollChatToBottom();
+      }
+    }
+
     // Auto-init on page load
     checkSavedUser();
     loadVehicles();
@@ -1038,6 +1290,36 @@ function renderPortalHtml(): string {
 // =============================================================================
 app.get('/', (c) => {
   return c.html(renderPortalHtml());
+});
+
+// =============================================================================
+// Route: AI Chatbot Assistant (น้องรถด่วน AI)
+// =============================================================================
+app.post('/api/v1/chat', async (c) => {
+  try {
+    const body = await c.req.json<{ message?: string; history?: any[] }>().catch(() => ({ message: '', history: [] }));
+    const userMessage = body?.message?.trim();
+    if (!userMessage) {
+      return c.json({ success: false, error: { message: 'กรุณาระบุข้อความสำหรับสนทนากับ AI' } }, 400);
+    }
+
+    // ดึงข้อมูลสถานะรถล่าสุดจาก Cloudflare D1
+    const { results: fleet } = await c.env.DB.prepare('SELECT * FROM vehicles').all<VehicleInfo>();
+
+    // ประมวลผลคำตอบผ่าน AI Assistant
+    const reply = await generateBotResponse(userMessage, fleet || [], body.history || [], c.env.AI);
+
+    return c.json({
+      success: true,
+      reply,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return c.json({
+      success: false,
+      error: { message: 'เกิดข้อผิดพลาดในการประมวลผลของ AI: ' + err.message }
+    }, 500);
+  }
 });
 
 // =============================================================================
